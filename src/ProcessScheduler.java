@@ -55,10 +55,23 @@ public class ProcessScheduler extends JFrame {
         }
     }
 
+    // YENİ EKLEME: Sadece okuma (Read-Only) sağlayan tablo modeli
+    class NonEditableTableModel extends DefaultTableModel {
+        NonEditableTableModel(Object[] columnNames, int rowCount) {
+            super(columnNames, rowCount);
+        }
+
+        @Override
+        public boolean isCellEditable(int row, int column) {
+            return false; // Hiçbir hücre düzenlenemez
+        }
+    }
+    // YENİ EKLEME BİTTİ
+
     // GUI bileşenleri
     private JTextArea txtInput;
     private JTable tblStats;
-    private DefaultTableModel modelStats;
+    private NonEditableTableModel modelStats; // Tür değişti
     private VisualizationPanel pnlChart;
     private JComboBox<String> cmbStrategy;
     private JTextField txtQuantum;
@@ -110,7 +123,9 @@ public class ProcessScheduler extends JFrame {
         scrollInput.setBorder(BorderFactory.createTitledBorder("File Contents"));
 
         String[] cols = {"ID", "Arrival", "Burst", "Priority", "Finish", "Turnaround", "Waiting"};
-        modelStats = new DefaultTableModel(cols, 0);
+
+        // NonEditableTableModel kullanımı
+        modelStats = new NonEditableTableModel(cols, 0);
         tblStats = new JTable(modelStats);
         JScrollPane scrollTable = new JScrollPane(tblStats);
         scrollTable.setBorder(BorderFactory.createTitledBorder("Results"));
