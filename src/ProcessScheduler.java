@@ -1,461 +1,415 @@
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.awt.event.ActionEvent;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.util.*;
 import java.util.List;
 
-// Main Class
 public class ProcessScheduler extends JFrame {
 
-    // --- Inner Class: Process ---
-    static class Process implements Comparable<Process> {
-        String id;
-        int arrivalTime;
-        int burstTime;
-        int priority;
+    // Süreç (Job) verilerini ve sonuçlarını tutan sınıf
+    static class Job implements Comparable<Job> {
+        String name;
+        int arrival;
+        int duration; // Çalışma süresi (Burst Time)
+        int level;    // Öncelik (Priority)
 
-        // Metrics
-        int startTime;
-        int finishTime;
-        int turnaroundTime;
-        int waitingTime;
-        int remainingTime; // For RR
+        // Simülasyon sonrası metrikler
+        int start;
+        int end;
+        int turnaround;
+        int wait;
+        int left;     // Kalan çalışma süresi (Round Robin için)
 
-        public Process(String id, int arrivalTime, int burstTime, int priority) {
-            this.id = id;
-            this.arrivalTime = arrivalTime;
-            this.burstTime = burstTime;
-            this.priority = priority;
-            this.remainingTime = burstTime;
+        public Job(String name, int arrival, int duration, int level) {
+            this.name = name;
+            this.arrival = arrival;
+            this.duration = duration;
+            this.level = level;
+            this.left = duration;
         }
 
-        // Deep copy for simulation restart
-        public Process copy() {
-            return new Process(this.id, this.arrivalTime, this.burstTime, this.priority);
+        // Simülasyonu temiz başlatmak için kopyalama metodu
+        public Job duplicate() {
+            return new Job(this.name, this.arrival, this.duration, this.level);
         }
 
         @Override
-        public int compareTo(Process o) {
-            return Integer.compare(this.arrivalTime, o.arrivalTime);
+        public int compareTo(Job other) {
+            return Integer.compare(this.arrival, other.arrival);
         }
     }
 
-    // --- Inner Class: Gantt Block (For visualization) ---
-    static class GanttBlock {
-        String processId;
-        int startTime;
-        int endTime;
+    // Gantt Şeması segmentlerini temsil eden sınıf
+    static class ChartSegment {
+        String owner; // Hangi sürecin çalıştığı (PID veya IDLE)
+        int in;      // Başlangıç zamanı
+        int out;     // Bitiş zamanı
 
-        public GanttBlock(String processId, int startTime, int endTime) {
-            this.processId = processId;
-            this.startTime = startTime;
-            this.endTime = endTime;
+        public ChartSegment(String owner, int in, int out) {
+            this.owner = owner;
+            this.in = in;
+            this.out = out;
         }
     }
 
-    // --- GUI Components ---
-    private JTextArea inputArea;
-    private JTable resultTable;
-    private DefaultTableModel tableModel;
-    private GanttPanel ganttPanel;
-    private JComboBox<String> algoSelector;
-    private JTextField quantumField;
-    private JLabel avgWaitLabel, avgTurnLabel, utilLabel;
+    // GUI bileşenleri
+    private JTextArea txtInput;
+    private JTable tblStats;
+    private DefaultTableModel modelStats;
+    private VisualizationPanel pnlChart;
+    private JComboBox<String> cmbStrategy;
+    private JTextField txtQuantum;
+    private JLabel lblAvgWait, lblAvgTurn, lblUtil;
 
-    private List<Process> loadedProcesses = new ArrayList<>();
+    private List<Job> rawData = new ArrayList<>();
 
     public ProcessScheduler() {
-        setTitle("CS 305: Process Scheduling Simulator");
-        setSize(1000, 700);
+        setTitle("Gokberk Ceviker OS_HOMEWORK");
+        setSize(950, 650);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout(10, 10));
 
-        // Top Panel: Controls
-        JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        JButton loadButton = new JButton("Load File");
+        initUI();
+    }
 
-        // Algoritma listesi
-        algoSelector = new JComboBox<>(new String[]{"FCFS", "SJF (Non-Preemptive)", "Priority (Non-Preemptive)", "Round Robin"});
+    // Arayüz bileşenlerini ayarlar
+    private void initUI() {
+        JPanel pnlTop = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JButton btnLoad = new JButton("Load File");
+        JButton btnRun = new JButton("Run Simulation");
 
-        // Time Quantum alanı
-        quantumField = new JTextField("3", 5);
+        cmbStrategy = new JComboBox<>(new String[]{"FCFS", "SJF (Non-Preemptive)", "Priority (Non-Preemptive)", "Round Robin"});
+        txtQuantum = new JTextField("3", 5);
+        txtQuantum.setEnabled(false);
 
-        // --- YENİ EKLENEN KISIM BAŞLANGIÇ ---
-        // 1. Başlangıçta FCFS seçili olduğu için kutuyu pasif yap
-        quantumField.setEnabled(false);
-
-        // 2. Seçim değiştiğinde tetiklenecek olay (Event Listener)
-        algoSelector.addActionListener(e -> {
-            String selected = (String) algoSelector.getSelectedItem();
-            // Eğer seçilen metin "Round" ile başlıyorsa (Round Robin ise) kutuyu aktif et
-            if (selected.startsWith("Round")) {
-                quantumField.setEnabled(true);
-                quantumField.setBackground(Color.WHITE); // Görsel ipucu: Beyaz (Aktif)
-            } else {
-                quantumField.setEnabled(false);
-                quantumField.setBackground(Color.LIGHT_GRAY); // Görsel ipucu: Gri (Pasif)
-            }
+        // Round Robin seçilince kuantum alanını aktifleştirme (UX)
+        cmbStrategy.addActionListener(e -> {
+            boolean isRR = ((String) cmbStrategy.getSelectedItem()).startsWith("Round");
+            txtQuantum.setEnabled(isRR);
+            txtQuantum.setBackground(isRR ? Color.WHITE : Color.LIGHT_GRAY);
         });
-        // --- YENİ EKLENEN KISIM BİTİŞ ---ss
-        JButton runButton = new JButton("Run Simulation");
 
-        topPanel.add(new JLabel("Input File:"));
-        topPanel.add(loadButton);
-        topPanel.add(new JLabel("Algorithm:"));
-        topPanel.add(algoSelector);
-        topPanel.add(new JLabel("Time Quantum (RR):"));
-        topPanel.add(quantumField);
-        topPanel.add(runButton);
+        pnlTop.add(new JLabel("Input File:"));
+        pnlTop.add(btnLoad);
+        pnlTop.add(new JLabel("Algorithm:"));
+        pnlTop.add(cmbStrategy);
+        pnlTop.add(new JLabel("Time Quantum:"));
+        pnlTop.add(txtQuantum);
+        pnlTop.add(btnRun);
 
-        add(topPanel, BorderLayout.NORTH);
+        add(pnlTop, BorderLayout.NORTH);
 
-        // Center Split: Input Text vs Results
-        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
 
-        // Input Preview
-        inputArea = new JTextArea(8, 40);
-        inputArea.setEditable(false);
-        JScrollPane inputScroll = new JScrollPane(inputArea);
-        inputScroll.setBorder(BorderFactory.createTitledBorder("Input File Content"));
+        txtInput = new JTextArea(8, 40);
+        txtInput.setEditable(false);
+        JScrollPane scrollInput = new JScrollPane(txtInput);
+        scrollInput.setBorder(BorderFactory.createTitledBorder("File Contents"));
 
-        // Results Table
-        String[] columns = {"ID", "Arrival", "Burst", "Priority", "Finish", "Turnaround", "Waiting"};
-        tableModel = new DefaultTableModel(columns, 0);
-        resultTable = new JTable(tableModel);
-        JScrollPane tableScroll = new JScrollPane(resultTable);
-        tableScroll.setBorder(BorderFactory.createTitledBorder("Simulation Metrics"));
+        String[] cols = {"ID", "Arrival", "Burst", "Priority", "Finish", "Turnaround", "Waiting"};
+        modelStats = new DefaultTableModel(cols, 0);
+        tblStats = new JTable(modelStats);
+        JScrollPane scrollTable = new JScrollPane(tblStats);
+        scrollTable.setBorder(BorderFactory.createTitledBorder("Results"));
 
-        // Bottom Stats Panel
-        JPanel statsPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 5));
-        avgWaitLabel = new JLabel("Avg Waiting: 0.0");
-        avgTurnLabel = new JLabel("Avg Turnaround: 0.0");
-        utilLabel = new JLabel("CPU Utilization: 0%");
-        statsPanel.add(avgTurnLabel);
-        statsPanel.add(avgWaitLabel);
-        statsPanel.add(utilLabel);
+        JPanel pnlStats = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 5));
+        lblAvgTurn = new JLabel("Avg Turnaround: 0.0");
+        lblAvgWait = new JLabel("Avg Waiting: 0.0");
+        lblUtil = new JLabel("CPU Utilization: 0%");
+        pnlStats.add(lblAvgTurn);
+        pnlStats.add(lblAvgWait);
+        pnlStats.add(lblUtil);
 
-        JPanel centerBottomContainer = new JPanel(new BorderLayout());
-        centerBottomContainer.add(tableScroll, BorderLayout.CENTER);
-        centerBottomContainer.add(statsPanel, BorderLayout.SOUTH);
+        JPanel pnlCenterBottom = new JPanel(new BorderLayout());
+        pnlCenterBottom.add(scrollTable, BorderLayout.CENTER);
+        pnlCenterBottom.add(pnlStats, BorderLayout.SOUTH);
 
-        splitPane.setTopComponent(inputScroll);
-        splitPane.setBottomComponent(centerBottomContainer);
-        splitPane.setDividerLocation(150);
+        split.setTopComponent(scrollInput);
+        split.setBottomComponent(pnlCenterBottom);
+        split.setDividerLocation(150);
+        add(split, BorderLayout.CENTER);
 
-        add(splitPane, BorderLayout.CENTER);
+        pnlChart = new VisualizationPanel();
+        pnlChart.setPreferredSize(new Dimension(1000, 150));
+        pnlChart.setBorder(BorderFactory.createTitledBorder("Gantt Visualization"));
+        add(pnlChart, BorderLayout.SOUTH);
 
-        // Bottom: Gantt Chart
-        ganttPanel = new GanttPanel();
-        ganttPanel.setPreferredSize(new Dimension(1000, 150));
-        ganttPanel.setBorder(BorderFactory.createTitledBorder("Gantt Chart Visualization"));
-        add(ganttPanel, BorderLayout.SOUTH);
-
-        // --- Event Listeners ---
-        loadButton.addActionListener(e -> loadFile());
-        runButton.addActionListener(e -> runSimulation());
+        btnLoad.addActionListener(e -> browseFile());
+        btnRun.addActionListener(e -> startSimulation());
     }
 
-    private void loadFile() {
-        JFileChooser fileChooser = new JFileChooser();
-        // Set default directory to current folder for ease
-        fileChooser.setCurrentDirectory(new File("."));
-        if (fileChooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
-            File file = fileChooser.getSelectedFile();
-            loadedProcesses.clear();
-            inputArea.setText("");
-            try (BufferedReader br = new BufferedReader(new FileReader(file))) {
-                String line;
-                while ((line = br.readLine()) != null) {
-                    if (line.trim().isEmpty()) continue;
-                    inputArea.append(line + "\n");
-                    String[] parts = line.split(",");
-                    String id = parts[0].trim();
-                    int arr = Integer.parseInt(parts[1].trim());
-                    int burst = Integer.parseInt(parts[2].trim());
-                    int prio = Integer.parseInt(parts[3].trim());
-                    loadedProcesses.add(new Process(id, arr, burst, prio));
-                }
-                JOptionPane.showMessageDialog(this, "Loaded " + loadedProcesses.size() + " processes.");
-            } catch (Exception ex) {
-                JOptionPane.showMessageDialog(this, "Error reading file: " + ex.getMessage());
-            }
-        }
-    }
-
-    private void runSimulation() {
-        if (loadedProcesses.isEmpty()) {
+    // Simülasyonu başlatır ve doğru algoritmayı çağırır
+    private void startSimulation() {
+        if (rawData.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Please load a file first.");
             return;
         }
 
-        // Create a fresh working copy of processes
-        List<Process> workList = new ArrayList<>();
-        for (Process p : loadedProcesses) workList.add(p.copy());
+        // Orijinal veriyi korumak için derin kopyalama
+        List<Job> activeJobs = new ArrayList<>();
+        for (Job j : rawData) activeJobs.add(j.duplicate());
 
-        String algo = (String) algoSelector.getSelectedItem();
-        List<GanttBlock> ganttData = new ArrayList<>();
+        String mode = (String) cmbStrategy.getSelectedItem();
+        List<ChartSegment> timeline = new ArrayList<>();
 
         try {
-            if (algo.startsWith("FCFS")) {
-                runFCFS(workList, ganttData);
-            } else if (algo.startsWith("SJF")) {
-                runSJF(workList, ganttData);
-            } else if (algo.startsWith("Priority")) {
-                runPriority(workList, ganttData);
-            } else if (algo.startsWith("Round")) {
-                int tq = Integer.parseInt(quantumField.getText().trim());
-                runRR(workList, tq, ganttData);
-            }
-
-            updateResults(workList, ganttData);
-
-        } catch (NumberFormatException e) {
-            JOptionPane.showMessageDialog(this, "Invalid Time Quantum.");
-        }
-    }
-
-    // --- ALGORITHMS ---
-
-    private void runFCFS(List<Process> processes, List<GanttBlock> gantt) {
-        processes.sort(Comparator.comparingInt(p -> p.arrivalTime));
-        int currentTime = 0;
-
-        for (Process p : processes) {
-            if (currentTime < p.arrivalTime) {
-                // IDLE
-                gantt.add(new GanttBlock("IDLE", currentTime, p.arrivalTime));
-                currentTime = p.arrivalTime;
-            }
-            int start = currentTime;
-            currentTime += p.burstTime;
-            p.finishTime = currentTime;
-            gantt.add(new GanttBlock(p.id, start, currentTime));
-        }
-    }
-
-    private void runSJF(List<Process> processes, List<GanttBlock> gantt) {
-        int currentTime = 0;
-        int completed = 0;
-        int n = processes.size();
-        Set<String> completedSet = new HashSet<>();
-
-        while (completed < n) {
-            Process selected = null;
-            // Find available processes
-            List<Process> available = new ArrayList<>();
-            for (Process p : processes) {
-                if (p.arrivalTime <= currentTime && !completedSet.contains(p.id)) {
-                    available.add(p);
-                }
-            }
-
-            if (available.isEmpty()) {
-                gantt.add(new GanttBlock("IDLE", currentTime, currentTime + 1));
-                currentTime++;
+            // Algoritma seçimine göre ilgili metodu çağır
+            if (mode.startsWith("Round")) {
+                int q = Integer.parseInt(txtQuantum.getText().trim());
+                calcRoundRobin(activeJobs, q, timeline);
+            } else if (mode.startsWith("Priority")) {
+                calcPriority(activeJobs, timeline);
+            } else if (mode.startsWith("SJF")) {
+                calcSJF(activeJobs, timeline);
             } else {
-                // Sort by Burst, then Arrival (FCFS tie break)
-                available.sort((p1, p2) -> {
-                    if (p1.burstTime != p2.burstTime) return Integer.compare(p1.burstTime, p2.burstTime);
-                    return Integer.compare(p1.arrivalTime, p2.arrivalTime);
-                });
-                selected = available.get(0);
-
-                int start = currentTime;
-                currentTime += selected.burstTime;
-                selected.finishTime = currentTime;
-                completedSet.add(selected.id);
-                completed++;
-                gantt.add(new GanttBlock(selected.id, start, currentTime));
+                calcFCFS(activeJobs, timeline);
             }
+            renderMetrics(activeJobs, timeline);
+
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Invalid Time Quantum value.");
         }
     }
 
-    private void runPriority(List<Process> processes, List<GanttBlock> gantt) {
-        int currentTime = 0;
-        int completed = 0;
-        int n = processes.size();
-        Set<String> completedSet = new HashSet<>();
+    // --- Algoritmalar ---
 
-        while (completed < n) {
-            List<Process> available = new ArrayList<>();
-            for (Process p : processes) {
-                if (p.arrivalTime <= currentTime && !completedSet.contains(p.id)) {
-                    available.add(p);
-                }
-            }
+    // Round Robin (RR) Algoritması (Preemptive)
+    private void calcRoundRobin(List<Job> jobs, int q, List<ChartSegment> timeline) {
+        jobs.sort(Comparator.comparingInt(j -> j.arrival));
+        Queue<Job> readyQ = new LinkedList<>();
 
-            if (available.isEmpty()) {
-                gantt.add(new GanttBlock("IDLE", currentTime, currentTime + 1));
-                currentTime++;
-            } else {
-                // Sort by Priority (Lower is higher), then Arrival
-                available.sort((p1, p2) -> {
-                    if (p1.priority != p2.priority) return Integer.compare(p1.priority, p2.priority);
-                    return Integer.compare(p1.arrivalTime, p2.arrivalTime);
-                });
-                Process selected = available.get(0);
+        int now = 0, doneCount = 0, idx = 0;
+        int total = jobs.size();
 
-                int start = currentTime;
-                currentTime += selected.burstTime;
-                selected.finishTime = currentTime;
-                completedSet.add(selected.id);
-                completed++;
-                gantt.add(new GanttBlock(selected.id, start, currentTime));
-            }
-        }
-    }
-
-    private void runRR(List<Process> processes, int quantum, List<GanttBlock> gantt) {
-        processes.sort(Comparator.comparingInt(p -> p.arrivalTime)); // Initial sort for arrival
-
-        Queue<Process> queue = new LinkedList<>();
-        int currentTime = 0;
-        int completed = 0;
-        int n = processes.size();
-        int processIndex = 0;
-
-        // Push first process(es)
-        while(processIndex < n && processes.get(processIndex).arrivalTime <= currentTime) {
-            queue.add(processes.get(processIndex));
-            processIndex++;
+        // Başlangıçta gelen süreçleri kuyruğa ekle
+        while(idx < total && jobs.get(idx).arrival <= now) {
+            readyQ.add(jobs.get(idx++));
         }
 
-        while(completed < n) {
-            if (queue.isEmpty()) {
-                // If queue is empty but more processes to come
-                if (processIndex < n) {
-                    // IDLE until next arrival
-                    int nextArrival = processes.get(processIndex).arrivalTime;
-                    gantt.add(new GanttBlock("IDLE", currentTime, nextArrival));
-                    currentTime = nextArrival;
-                    while(processIndex < n && processes.get(processIndex).arrivalTime <= currentTime) {
-                        queue.add(processes.get(processIndex));
-                        processIndex++;
+        while(doneCount < total) {
+            if (readyQ.isEmpty()) {
+                // CPU boşta (IDLE)
+                if (idx < total) {
+                    int nextArr = jobs.get(idx).arrival;
+                    timeline.add(new ChartSegment("IDLE", now, nextArr));
+                    now = nextArr;
+                    // Yeni gelenleri kuyruğa ekle
+                    while(idx < total && jobs.get(idx).arrival <= now) {
+                        readyQ.add(jobs.get(idx++));
                     }
                 }
                 continue;
             }
 
-            Process current = queue.poll();
-            int runTime = Math.min(current.remainingTime, quantum);
+            Job current = readyQ.poll();
+            int exec = Math.min(current.left, q);
 
-            gantt.add(new GanttBlock(current.id, currentTime, currentTime + runTime));
+            timeline.add(new ChartSegment(current.name, now, now + exec));
+            now += exec;
+            current.left -= exec;
 
-            currentTime += runTime;
-            current.remainingTime -= runTime;
-
-            // CRITICAL RR LOGIC: Check for new arrivals BEFORE re-adding current process
-            while(processIndex < n && processes.get(processIndex).arrivalTime <= currentTime) {
-                queue.add(processes.get(processIndex));
-                processIndex++;
+            // Önemli RR Mantığı: Yeni gelenleri, mevcut süreçten önce kuyruğa al
+            while(idx < total && jobs.get(idx).arrival <= now) {
+                readyQ.add(jobs.get(idx++));
             }
 
-            if (current.remainingTime > 0) {
-                queue.add(current);
+            if (current.left > 0) {
+                readyQ.add(current); // Kalan süresi varsa kuyruğun sonuna ekle
             } else {
-                current.finishTime = currentTime;
-                completed++;
+                current.end = now;
+                doneCount++; // Süreç tamamlandı
             }
         }
     }
 
-    // --- Metrics & UI Update ---
+    // Öncelikli Planlama (Priority Scheduling) Algoritması (Non-Preemptive)
+    private void calcPriority(List<Job> jobs, List<ChartSegment> timeline) {
+        int now = 0, done = 0;
+        Set<String> finished = new HashSet<>();
 
-    private void updateResults(List<Process> processes, List<GanttBlock> gantt) {
-        tableModel.setRowCount(0);
-        double totalWait = 0, totalTurn = 0, totalBurst = 0;
-        int maxFinish = 0;
+        while (done < jobs.size()) {
+            List<Job> ready = new ArrayList<>();
+            for (Job j : jobs) {
+                if (j.arrival <= now && !finished.contains(j.name)) ready.add(j);
+            }
 
-        // Sort by ID for clean table output
-        processes.sort(Comparator.comparing(p -> p.id));
+            if (ready.isEmpty()) {
+                timeline.add(new ChartSegment("IDLE", now, ++now));
+            } else {
+                // Seçim: En düşük öncelik değeri (en yüksek öncelik), eşitlikte FCFS
+                ready.sort((a, b) -> a.level != b.level ? Integer.compare(a.level, b.level) : Integer.compare(a.arrival, b.arrival));
 
-        for (Process p : processes) {
-            p.turnaroundTime = p.finishTime - p.arrivalTime;
-            p.waitingTime = p.turnaroundTime - p.burstTime;
+                Job picked = ready.get(0);
+                int start = now;
+                now += picked.duration;
+                picked.end = now;
 
-            totalWait += p.waitingTime;
-            totalTurn += p.turnaroundTime;
-            totalBurst += p.burstTime;
-            if(p.finishTime > maxFinish) maxFinish = p.finishTime;
-
-            tableModel.addRow(new Object[]{
-                    p.id, p.arrivalTime, p.burstTime, p.priority,
-                    p.finishTime, p.turnaroundTime, p.waitingTime
-            });
+                finished.add(picked.name);
+                done++;
+                timeline.add(new ChartSegment(picked.name, start, now));
+            }
         }
-
-        avgWaitLabel.setText(String.format("Avg Waiting: %.2f", totalWait / processes.size()));
-        avgTurnLabel.setText(String.format("Avg Turnaround: %.2f", totalTurn / processes.size()));
-
-        double util = (maxFinish > 0) ? (totalBurst / maxFinish) * 100.0 : 0.0;
-        utilLabel.setText(String.format("CPU Utilization: %.2f%%", util));
-
-        ganttPanel.setGanttData(gantt, maxFinish);
     }
 
-    // --- Custom Gantt Panel ---
-    class GanttPanel extends JPanel {
-        private List<GanttBlock> blocks;
-        private int totalTime;
+    // En Kısa İş İlk (SJF) Algoritması (Non-Preemptive)
+    private void calcSJF(List<Job> jobs, List<ChartSegment> timeline) {
+        int now = 0, done = 0;
+        Set<String> finished = new HashSet<>();
 
-        public void setGanttData(List<GanttBlock> blocks, int totalTime) {
-            this.blocks = blocks;
-            this.totalTime = totalTime;
+        while (done < jobs.size()) {
+            List<Job> ready = new ArrayList<>();
+            for (Job j : jobs) {
+                if (j.arrival <= now && !finished.contains(j.name)) ready.add(j);
+            }
+
+            if (ready.isEmpty()) {
+                timeline.add(new ChartSegment("IDLE", now, ++now));
+            } else {
+                // Seçim: En kısa çalışma süresi, eşitlikte FCFS
+                ready.sort((a, b) -> a.duration != b.duration ? Integer.compare(a.duration, b.duration) : Integer.compare(a.arrival, b.arrival));
+
+                Job picked = ready.get(0);
+                int start = now;
+                now += picked.duration;
+                picked.end = now;
+
+                finished.add(picked.name);
+                done++;
+                timeline.add(new ChartSegment(picked.name, start, now));
+            }
+        }
+    }
+
+    // İlk Gelen İlk Hizmet (FCFS) Algoritması (Non-Preemptive)
+    private void calcFCFS(List<Job> jobs, List<ChartSegment> timeline) {
+        jobs.sort(Comparator.comparingInt(j -> j.arrival)); // Varış zamanına göre sırala
+        int now = 0;
+
+        for (Job j : jobs) {
+            if (now < j.arrival) {
+                // Varıştan önce bekleme (IDLE) süresi
+                timeline.add(new ChartSegment("IDLE", now, j.arrival));
+                now = j.arrival;
+            }
+            int start = now;
+            now += j.duration;
+            j.end = now;
+            timeline.add(new ChartSegment(j.name, start, now));
+        }
+    }
+
+    // Metrikleri hesaplar ve GUI'yi günceller
+    private void renderMetrics(List<Job> jobs, List<ChartSegment> timeline) {
+        modelStats.setRowCount(0);
+        double sumWait = 0, sumTurn = 0, sumBurst = 0;
+        int maxEnd = 0;
+
+        jobs.sort(Comparator.comparing(j -> j.name)); // Tablo için ID'ye göre sırala
+
+        for (Job j : jobs) {
+            j.turnaround = j.end - j.arrival;
+            j.wait = j.turnaround - j.duration;
+
+            sumWait += j.wait;
+            sumTurn += j.turnaround;
+            sumBurst += j.duration;
+            if (j.end > maxEnd) maxEnd = j.end;
+
+            modelStats.addRow(new Object[]{j.name, j.arrival, j.duration, j.level, j.end, j.turnaround, j.wait});
+        }
+
+        lblAvgWait.setText(String.format("Avg Waiting: %.2f", sumWait / jobs.size()));
+        lblAvgTurn.setText(String.format("Avg Turnaround: %.2f", sumTurn / jobs.size()));
+
+        // CPU Kullanımı = (Toplam Burst Süresi / Toplam Simülasyon Süresi) * 100
+        double util = (maxEnd > 0) ? (sumBurst / maxEnd) * 100.0 : 0.0;
+        lblUtil.setText(String.format("CPU Utilization: %.2f%%", util));
+
+        pnlChart.drawData(timeline, maxEnd);
+    }
+
+    // Dosya okuma ve verileri yükleme
+    private void browseFile() {
+        JFileChooser fc = new JFileChooser(new File("."));
+        if (fc.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+            rawData.clear();
+            txtInput.setText("");
+            try (BufferedReader br = new BufferedReader(new FileReader(fc.getSelectedFile()))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    if (line.trim().isEmpty()) continue;
+                    txtInput.append(line + "\n");
+                    String[] token = line.split(",");
+                    rawData.add(new Job(token[0].trim(),
+                            Integer.parseInt(token[1].trim()),
+                            Integer.parseInt(token[2].trim()),
+                            Integer.parseInt(token[3].trim())));
+                }
+                JOptionPane.showMessageDialog(this, "Loaded " + rawData.size() + " tasks.");
+            } catch (Exception e) {
+                JOptionPane.showMessageDialog(this, "Read Error: " + e.getMessage());
+            }
+        }
+    }
+
+    // Gantt Şeması çizim paneli
+    class VisualizationPanel extends JPanel {
+        private List<ChartSegment> segments;
+        private int totalDuration;
+
+        public void drawData(List<ChartSegment> segments, int duration) {
+            this.segments = segments;
+            this.totalDuration = duration;
             repaint();
         }
 
         @Override
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);
-            if (blocks == null || blocks.isEmpty()) return;
+            if (segments == null || segments.isEmpty()) return;
 
             int h = getHeight();
             int w = getWidth();
-            int barHeight = 40;
-            int y = (h - barHeight) / 2;
+            int barH = 40;
+            int y = (h - barH) / 2;
+            double pxPerUnit = (double) (w - 40) / totalDuration; // Ölçeklendirme faktörü
 
-            // Dynamically scale width
-            double scale = (double) (w - 40) / totalTime;
+            for (ChartSegment s : segments) {
+                int x = 20 + (int) (s.in * pxPerUnit);
+                int width = (int) ((s.out - s.in) * pxPerUnit);
 
-            for (GanttBlock b : blocks) {
-                int x = 20 + (int) (b.startTime * scale);
-                int bw = (int) ((b.endTime - b.startTime) * scale);
+                if (s.owner.equals("IDLE")) g.setColor(Color.LIGHT_GRAY);
+                else g.setColor(generateColor(s.owner));
 
-                // Color logic
-                if (b.processId.equals("IDLE")) g.setColor(Color.LIGHT_GRAY);
-                else g.setColor(getColorForId(b.processId));
-
-                g.fillRect(x, y, bw, barHeight);
+                g.fillRect(x, y, width, barH);
                 g.setColor(Color.BLACK);
-                g.drawRect(x, y, bw, barHeight);
+                g.drawRect(x, y, width, barH);
 
-                // Text centering
-                String label = b.processId;
+                // Segment adı (PID)
                 FontMetrics fm = g.getFontMetrics();
-                int tx = x + (bw - fm.stringWidth(label)) / 2;
-                int ty = y + (barHeight + fm.getAscent()) / 2 - 2;
-                g.drawString(label, tx, ty);
+                int txtX = x + (width - fm.stringWidth(s.owner)) / 2;
+                int txtY = y + (barH + fm.getAscent()) / 2 - 2;
+                g.drawString(s.owner, txtX, txtY);
 
-                // Time markers
-                g.drawString(String.valueOf(b.startTime), x, y + barHeight + 15);
+                // Başlangıç zamanı etiketi
+                g.drawString(String.valueOf(s.in), x, y + barH + 15);
             }
-            // Final time marker
-            g.drawString(String.valueOf(totalTime), 20 + (int)(totalTime * scale), y + barHeight + 15);
+            // Bitiş zamanı etiketi
+            int finalX = 20 + (int)(totalDuration * pxPerUnit);
+            g.drawString(String.valueOf(totalDuration), finalX, y + barH + 15);
         }
 
-        private Color getColorForId(String id) {
-            int hash = id.hashCode();
-            return new Color((hash * 123) % 255, (hash * 456) % 255, (hash * 789) % 255);
+        // PID'ye göre rastgele renk üretir
+        private Color generateColor(String seed) {
+            int hash = seed.hashCode();
+            return new Color((hash * 100) % 255, (hash * 200) % 255, (hash * 300) % 255);
         }
     }
 
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> {
-            new ProcessScheduler().setVisible(true);
-        });
+        SwingUtilities.invokeLater(() -> new ProcessScheduler().setVisible(true));
     }
 }
