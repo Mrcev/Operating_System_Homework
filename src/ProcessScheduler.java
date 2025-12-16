@@ -1,5 +1,8 @@
 import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
+import javax.swing.table.JTableHeader;
 import java.awt.*;
 import java.io.BufferedReader;
 import java.io.File;
@@ -9,19 +12,24 @@ import java.util.List;
 
 public class ProcessScheduler extends JFrame {
 
+    // --- Renk Paleti ---
+    private final Color PRIMARY_COLOR = new Color(52, 152, 219); // Mavi
+    private final Color ACCENT_COLOR = new Color(46, 204, 113);  // Yeşil
+    private final Color BG_COLOR = new Color(236, 240, 241);     // Açık Gri
+    private final Color TEXT_COLOR = new Color(44, 62, 80);      // Koyu Lacivert
+
     // Süreç (Job) verilerini ve sonuçlarını tutan sınıf
     static class Job implements Comparable<Job> {
         String name;
         int arrival;
-        int duration; // Çalışma süresi (Burst Time)
-        int level;    // Öncelik (Priority)
+        int duration;
+        int level;
 
-        // Simülasyon sonrası metrikler
         int start;
         int end;
         int turnaround;
         int wait;
-        int left;     // Kalan çalışma süresi (Round Robin için)
+        int left;
 
         public Job(String name, int arrival, int duration, int level) {
             this.name = name;
@@ -31,7 +39,6 @@ public class ProcessScheduler extends JFrame {
             this.left = duration;
         }
 
-        // Simülasyonu temiz başlatmak için kopyalama metodu
         public Job duplicate() {
             return new Job(this.name, this.arrival, this.duration, this.level);
         }
@@ -42,11 +49,11 @@ public class ProcessScheduler extends JFrame {
         }
     }
 
-    // Gantt Şeması segmentlerini temsil eden sınıf
+    // Gantt Şeması segmentleri
     static class ChartSegment {
-        String owner; // Hangi sürecin çalıştığı (PID veya IDLE)
-        int in;      // Başlangıç zamanı
-        int out;     // Bitiş zamanı
+        String owner;
+        int in;
+        int out;
 
         public ChartSegment(String owner, int in, int out) {
             this.owner = owner;
@@ -55,7 +62,7 @@ public class ProcessScheduler extends JFrame {
         }
     }
 
-    // YENİ EKLEME: Sadece okuma (Read-Only) sağlayan tablo modeli
+    // Read-Only Tablo Modeli
     class NonEditableTableModel extends DefaultTableModel {
         NonEditableTableModel(Object[] columnNames, int rowCount) {
             super(columnNames, rowCount);
@@ -63,15 +70,14 @@ public class ProcessScheduler extends JFrame {
 
         @Override
         public boolean isCellEditable(int row, int column) {
-            return false; // Hiçbir hücre düzenlenemez
+            return false;
         }
     }
-    // YENİ EKLEME BİTTİ
 
     // GUI bileşenleri
     private JTextArea txtInput;
     private JTable tblStats;
-    private NonEditableTableModel modelStats; // Tür değişti
+    private NonEditableTableModel modelStats;
     private VisualizationPanel pnlChart;
     private JComboBox<String> cmbStrategy;
     private JTextField txtQuantum;
@@ -81,59 +87,101 @@ public class ProcessScheduler extends JFrame {
 
     public ProcessScheduler() {
         setTitle("Gokberk Ceviker OS_HOMEWORK");
-        setSize(950, 650);
+        setSize(1100, 750); // Biraz daha geniş pencere
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setLayout(new BorderLayout(10, 10));
+        setLayout(new BorderLayout(15, 15)); // Ana layout boşluklu
+        getContentPane().setBackground(BG_COLOR); // Arka plan rengi
 
         initUI();
     }
 
-    // Arayüz bileşenlerini ayarlar
     private void initUI() {
-        JPanel pnlTop = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        JButton btnLoad = new JButton("Load File");
-        JButton btnRun = new JButton("Run Simulation");
+        // --- Üst Panel (Kontroller) ---
+        JPanel pnlTop = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 15));
+        pnlTop.setBackground(Color.WHITE);
+        pnlTop.setBorder(BorderFactory.createMatteBorder(0, 0, 2, 0, new Color(189, 195, 199)));
+
+        JButton btnLoad = createStyledButton("Load File", PRIMARY_COLOR);
+        JButton btnRun = createStyledButton("Run Simulation", PRIMARY_COLOR);
 
         cmbStrategy = new JComboBox<>(new String[]{"FCFS", "SJF (Non-Preemptive)", "Priority (Non-Preemptive)", "Round Robin"});
-        txtQuantum = new JTextField("3", 5);
+        cmbStrategy.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        cmbStrategy.setBackground(Color.WHITE);
+
+        txtQuantum = new JTextField("3", 4);
+        txtQuantum.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        txtQuantum.setHorizontalAlignment(JTextField.CENTER);
         txtQuantum.setEnabled(false);
 
-        // Round Robin seçilince kuantum alanını aktifleştirme (UX)
         cmbStrategy.addActionListener(e -> {
             boolean isRR = ((String) cmbStrategy.getSelectedItem()).startsWith("Round");
             txtQuantum.setEnabled(isRR);
-            txtQuantum.setBackground(isRR ? Color.WHITE : Color.LIGHT_GRAY);
+            txtQuantum.setBackground(isRR ? Color.WHITE : new Color(220, 220, 220));
         });
 
-        pnlTop.add(new JLabel("Input File:"));
+        pnlTop.add(createLabel("Input File:"));
         pnlTop.add(btnLoad);
-        pnlTop.add(new JLabel("Algorithm:"));
+        pnlTop.add(Box.createHorizontalStrut(20)); // Boşluk
+        pnlTop.add(createLabel("Algorithm:"));
         pnlTop.add(cmbStrategy);
-        pnlTop.add(new JLabel("Time Quantum:"));
+        pnlTop.add(createLabel("Time Quantum:"));
         pnlTop.add(txtQuantum);
+        pnlTop.add(Box.createHorizontalStrut(20)); // Boşluk
         pnlTop.add(btnRun);
 
         add(pnlTop, BorderLayout.NORTH);
 
+        // --- Orta Panel (Veri ve Tablo) ---
         JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+        split.setDividerSize(10);
+        split.setBorder(null);
+        split.setBackground(BG_COLOR);
 
+        // Input Alanı
         txtInput = new JTextArea(8, 40);
         txtInput.setEditable(false);
+        txtInput.setFont(new Font("Monospaced", Font.PLAIN, 13));
+        txtInput.setBorder(new EmptyBorder(5,5,5,5));
+
         JScrollPane scrollInput = new JScrollPane(txtInput);
-        scrollInput.setBorder(BorderFactory.createTitledBorder("File Contents"));
+        scrollInput.setBorder(BorderFactory.createTitledBorder(
+                BorderFactory.createLineBorder(PRIMARY_COLOR), " File Contents ",
+                0, 0, new Font("Segoe UI", Font.BOLD, 12), PRIMARY_COLOR));
+        scrollInput.setBackground(Color.WHITE);
 
+        // Tablo Alanı
         String[] cols = {"ID", "Arrival", "Burst", "Priority", "Finish", "Turnaround", "Waiting"};
-
-        // NonEditableTableModel kullanımı
         modelStats = new NonEditableTableModel(cols, 0);
         tblStats = new JTable(modelStats);
-        JScrollPane scrollTable = new JScrollPane(tblStats);
-        scrollTable.setBorder(BorderFactory.createTitledBorder("Results"));
 
-        JPanel pnlStats = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 5));
-        lblAvgTurn = new JLabel("Avg Turnaround: 0.0");
-        lblAvgWait = new JLabel("Avg Waiting: 0.0");
-        lblUtil = new JLabel("CPU Utilization: 0%");
+        // Tablo Stili
+        tblStats.setRowHeight(25);
+        tblStats.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        tblStats.setGridColor(new Color(224, 224, 224));
+        tblStats.setSelectionBackground(new Color(232, 240, 254));
+        tblStats.setSelectionForeground(Color.BLACK);
+
+        // Tablo Başlığı Stili
+        JTableHeader header = tblStats.getTableHeader();
+        header.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        header.setBackground(new Color(245, 245, 245));
+        header.setForeground(TEXT_COLOR);
+
+        JScrollPane scrollTable = new JScrollPane(tblStats);
+        scrollTable.setBorder(BorderFactory.createTitledBorder(
+                BorderFactory.createLineBorder(ACCENT_COLOR), " Simulation Results ",
+                0, 0, new Font("Segoe UI", Font.BOLD, 12), ACCENT_COLOR));
+        scrollTable.getViewport().setBackground(Color.WHITE);
+
+        // İstatistik Paneli
+        JPanel pnlStats = new JPanel(new FlowLayout(FlowLayout.CENTER, 40, 10));
+        pnlStats.setBackground(Color.WHITE);
+        pnlStats.setBorder(new EmptyBorder(5,0,5,0));
+
+        lblAvgTurn = createStatLabel("Avg Turnaround: 0.0");
+        lblAvgWait = createStatLabel("Avg Waiting: 0.0");
+        lblUtil = createStatLabel("CPU Utilization: 0%");
+
         pnlStats.add(lblAvgTurn);
         pnlStats.add(lblAvgWait);
         pnlStats.add(lblUtil);
@@ -144,26 +192,70 @@ public class ProcessScheduler extends JFrame {
 
         split.setTopComponent(scrollInput);
         split.setBottomComponent(pnlCenterBottom);
-        split.setDividerLocation(150);
-        add(split, BorderLayout.CENTER);
+        split.setDividerLocation(180);
 
+        // Padding ekle
+        JPanel pnlWrapper = new JPanel(new BorderLayout());
+        pnlWrapper.add(split, BorderLayout.CENTER);
+        pnlWrapper.setBorder(new EmptyBorder(0, 15, 0, 15)); // Sol ve sağ boşluk
+        pnlWrapper.setBackground(BG_COLOR);
+
+        add(pnlWrapper, BorderLayout.CENTER);
+
+        // --- Alt Panel (Gantt) ---
         pnlChart = new VisualizationPanel();
-        pnlChart.setPreferredSize(new Dimension(1000, 150));
-        pnlChart.setBorder(BorderFactory.createTitledBorder("Gantt Visualization"));
-        add(pnlChart, BorderLayout.SOUTH);
+        pnlChart.setPreferredSize(new Dimension(1000, 140));
+        pnlChart.setBorder(BorderFactory.createTitledBorder(
+                BorderFactory.createLineBorder(Color.GRAY), " Gantt Visualization ",
+                0, 0, new Font("Segoe UI", Font.BOLD, 12), Color.DARK_GRAY));
+        pnlChart.setBackground(Color.WHITE);
 
+        JPanel pnlBottomWrapper = new JPanel(new BorderLayout());
+        pnlBottomWrapper.add(pnlChart, BorderLayout.CENTER);
+        pnlBottomWrapper.setBorder(new EmptyBorder(10, 15, 15, 15)); // Alt boşluk
+        pnlBottomWrapper.setBackground(BG_COLOR);
+
+        add(pnlBottomWrapper, BorderLayout.SOUTH);
+
+        // Button Actions
         btnLoad.addActionListener(e -> browseFile());
         btnRun.addActionListener(e -> startSimulation());
     }
 
-    // Simülasyonu başlatır ve doğru algoritmayı çağırır
+    // --- Helper Methods for Styling ---
+
+    private JButton createStyledButton(String text, Color bg) {
+        JButton btn = new JButton(text);
+        btn.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        btn.setBackground(bg);
+        btn.setForeground(Color.WHITE);
+        btn.setFocusPainted(false);
+        btn.setBorder(new EmptyBorder(8, 15, 8, 15)); // İç boşluk
+        return btn;
+    }
+
+    private JLabel createLabel(String text) {
+        JLabel lbl = new JLabel(text);
+        lbl.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        lbl.setForeground(TEXT_COLOR);
+        return lbl;
+    }
+
+    private JLabel createStatLabel(String text) {
+        JLabel lbl = new JLabel(text);
+        lbl.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        lbl.setForeground(new Color(50, 50, 50));
+        return lbl;
+    }
+
+    // --- Logic ---
+
     private void startSimulation() {
         if (rawData.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Please load a file first.");
+            JOptionPane.showMessageDialog(this, "Please load a file first.", "Warning", JOptionPane.WARNING_MESSAGE);
             return;
         }
 
-        // Orijinal veriyi korumak için derin kopyalama
         List<Job> activeJobs = new ArrayList<>();
         for (Job j : rawData) activeJobs.add(j.duplicate());
 
@@ -171,7 +263,6 @@ public class ProcessScheduler extends JFrame {
         List<ChartSegment> timeline = new ArrayList<>();
 
         try {
-            // Algoritma seçimine göre ilgili metodu çağır
             if (mode.startsWith("Round")) {
                 int q = Integer.parseInt(txtQuantum.getText().trim());
                 calcRoundRobin(activeJobs, q, timeline);
@@ -185,13 +276,10 @@ public class ProcessScheduler extends JFrame {
             renderMetrics(activeJobs, timeline);
 
         } catch (NumberFormatException ex) {
-            JOptionPane.showMessageDialog(this, "Invalid Time Quantum value.");
+            JOptionPane.showMessageDialog(this, "Invalid Time Quantum value.", "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
-    // --- Algoritmalar ---
-
-    // Round Robin (RR) Algoritması (Preemptive)
     private void calcRoundRobin(List<Job> jobs, int q, List<ChartSegment> timeline) {
         jobs.sort(Comparator.comparingInt(j -> j.arrival));
         Queue<Job> readyQ = new LinkedList<>();
@@ -199,19 +287,16 @@ public class ProcessScheduler extends JFrame {
         int now = 0, doneCount = 0, idx = 0;
         int total = jobs.size();
 
-        // Başlangıçta gelen süreçleri kuyruğa ekle
         while(idx < total && jobs.get(idx).arrival <= now) {
             readyQ.add(jobs.get(idx++));
         }
 
         while(doneCount < total) {
             if (readyQ.isEmpty()) {
-                // CPU boşta (IDLE)
                 if (idx < total) {
                     int nextArr = jobs.get(idx).arrival;
                     timeline.add(new ChartSegment("IDLE", now, nextArr));
                     now = nextArr;
-                    // Yeni gelenleri kuyruğa ekle
                     while(idx < total && jobs.get(idx).arrival <= now) {
                         readyQ.add(jobs.get(idx++));
                     }
@@ -226,21 +311,19 @@ public class ProcessScheduler extends JFrame {
             now += exec;
             current.left -= exec;
 
-            // Önemli RR Mantığı: Yeni gelenleri, mevcut süreçten önce kuyruğa al
             while(idx < total && jobs.get(idx).arrival <= now) {
                 readyQ.add(jobs.get(idx++));
             }
 
             if (current.left > 0) {
-                readyQ.add(current); // Kalan süresi varsa kuyruğun sonuna ekle
+                readyQ.add(current);
             } else {
                 current.end = now;
-                doneCount++; // Süreç tamamlandı
+                doneCount++;
             }
         }
     }
 
-    // Öncelikli Planlama (Priority Scheduling) Algoritması (Non-Preemptive)
     private void calcPriority(List<Job> jobs, List<ChartSegment> timeline) {
         int now = 0, done = 0;
         Set<String> finished = new HashSet<>();
@@ -254,14 +337,11 @@ public class ProcessScheduler extends JFrame {
             if (ready.isEmpty()) {
                 timeline.add(new ChartSegment("IDLE", now, ++now));
             } else {
-                // Seçim: En düşük öncelik değeri (en yüksek öncelik), eşitlikte FCFS
                 ready.sort((a, b) -> a.level != b.level ? Integer.compare(a.level, b.level) : Integer.compare(a.arrival, b.arrival));
-
                 Job picked = ready.get(0);
                 int start = now;
                 now += picked.duration;
                 picked.end = now;
-
                 finished.add(picked.name);
                 done++;
                 timeline.add(new ChartSegment(picked.name, start, now));
@@ -269,7 +349,6 @@ public class ProcessScheduler extends JFrame {
         }
     }
 
-    // En Kısa İş İlk (SJF) Algoritması (Non-Preemptive)
     private void calcSJF(List<Job> jobs, List<ChartSegment> timeline) {
         int now = 0, done = 0;
         Set<String> finished = new HashSet<>();
@@ -283,14 +362,11 @@ public class ProcessScheduler extends JFrame {
             if (ready.isEmpty()) {
                 timeline.add(new ChartSegment("IDLE", now, ++now));
             } else {
-                // Seçim: En kısa çalışma süresi, eşitlikte FCFS
                 ready.sort((a, b) -> a.duration != b.duration ? Integer.compare(a.duration, b.duration) : Integer.compare(a.arrival, b.arrival));
-
                 Job picked = ready.get(0);
                 int start = now;
                 now += picked.duration;
                 picked.end = now;
-
                 finished.add(picked.name);
                 done++;
                 timeline.add(new ChartSegment(picked.name, start, now));
@@ -298,14 +374,12 @@ public class ProcessScheduler extends JFrame {
         }
     }
 
-    // İlk Gelen İlk Hizmet (FCFS) Algoritması (Non-Preemptive)
     private void calcFCFS(List<Job> jobs, List<ChartSegment> timeline) {
-        jobs.sort(Comparator.comparingInt(j -> j.arrival)); // Varış zamanına göre sırala
+        jobs.sort(Comparator.comparingInt(j -> j.arrival));
         int now = 0;
 
         for (Job j : jobs) {
             if (now < j.arrival) {
-                // Varıştan önce bekleme (IDLE) süresi
                 timeline.add(new ChartSegment("IDLE", now, j.arrival));
                 now = j.arrival;
             }
@@ -316,13 +390,12 @@ public class ProcessScheduler extends JFrame {
         }
     }
 
-    // Metrikleri hesaplar ve GUI'yi günceller
     private void renderMetrics(List<Job> jobs, List<ChartSegment> timeline) {
         modelStats.setRowCount(0);
         double sumWait = 0, sumTurn = 0, sumBurst = 0;
         int maxEnd = 0;
 
-        jobs.sort(Comparator.comparing(j -> j.name)); // Tablo için ID'ye göre sırala
+        jobs.sort(Comparator.comparing(j -> j.name));
 
         for (Job j : jobs) {
             j.turnaround = j.end - j.arrival;
@@ -339,14 +412,12 @@ public class ProcessScheduler extends JFrame {
         lblAvgWait.setText(String.format("Avg Waiting: %.2f", sumWait / jobs.size()));
         lblAvgTurn.setText(String.format("Avg Turnaround: %.2f", sumTurn / jobs.size()));
 
-        // CPU Kullanımı = (Toplam Burst Süresi / Toplam Simülasyon Süresi) * 100
         double util = (maxEnd > 0) ? (sumBurst / maxEnd) * 100.0 : 0.0;
-        lblUtil.setText(String.format("CPU Utilization: %.2f%%", util));
+        lblUtil.setText(String.format("CPU Utilization: %.1f%%", util));
 
         pnlChart.drawData(timeline, maxEnd);
     }
 
-    // Dosya okuma ve verileri yükleme
     private void browseFile() {
         JFileChooser fc = new JFileChooser(new File("."));
         if (fc.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
@@ -365,12 +436,12 @@ public class ProcessScheduler extends JFrame {
                 }
                 JOptionPane.showMessageDialog(this, "Loaded " + rawData.size() + " tasks.");
             } catch (Exception e) {
-                JOptionPane.showMessageDialog(this, "Read Error: " + e.getMessage());
+                JOptionPane.showMessageDialog(this, "Read Error: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             }
         }
     }
 
-    // Gantt Şeması çizim paneli
+    // --- Improved Gantt Chart ---
     class VisualizationPanel extends JPanel {
         private List<ChartSegment> segments;
         private int totalDuration;
@@ -386,45 +457,81 @@ public class ProcessScheduler extends JFrame {
             super.paintComponent(g);
             if (segments == null || segments.isEmpty()) return;
 
+            Graphics2D g2d = (Graphics2D) g;
+            // Anti-aliasing for smooth text and lines
+            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
             int h = getHeight();
             int w = getWidth();
-            int barH = 40;
+            int barH = 50; // Biraz daha kalın çubuklar
             int y = (h - barH) / 2;
-            double pxPerUnit = (double) (w - 40) / totalDuration; // Ölçeklendirme faktörü
+            double pxPerUnit = (double) (w - 60) / totalDuration; // Kenar payı artırıldı
 
             for (ChartSegment s : segments) {
-                int x = 20 + (int) (s.in * pxPerUnit);
+                int x = 30 + (int) (s.in * pxPerUnit);
                 int width = (int) ((s.out - s.in) * pxPerUnit);
 
-                if (s.owner.equals("IDLE")) g.setColor(Color.LIGHT_GRAY);
-                else g.setColor(generateColor(s.owner));
+                // Renk seçimi
+                if (s.owner.equals("IDLE")) {
+                    g2d.setColor(new Color(220, 220, 220)); // Açık gri pattern
+                } else {
+                    g2d.setColor(generateColor(s.owner));
+                }
 
-                g.fillRect(x, y, width, barH);
-                g.setColor(Color.BLACK);
-                g.drawRect(x, y, width, barH);
+                // Çubuk çizimi
+                g2d.fillRoundRect(x, y, width, barH, 5, 5); // Köşeleri hafif yuvarlatılmış
 
-                // Segment adı (PID)
-                FontMetrics fm = g.getFontMetrics();
-                int txtX = x + (width - fm.stringWidth(s.owner)) / 2;
-                int txtY = y + (barH + fm.getAscent()) / 2 - 2;
-                g.drawString(s.owner, txtX, txtY);
+                // Kenarlık
+                g2d.setColor(Color.WHITE);
+                g2d.setStroke(new BasicStroke(1));
+                g2d.drawRoundRect(x, y, width, barH, 5, 5);
 
-                // Başlangıç zamanı etiketi
-                g.drawString(String.valueOf(s.in), x, y + barH + 15);
+                // Metin (Process ID)
+                g2d.setColor(s.owner.equals("IDLE") ? Color.GRAY : Color.WHITE);
+                g2d.setFont(new Font("Segoe UI", Font.BOLD, 12));
+                FontMetrics fm = g2d.getFontMetrics();
+
+                // Eğer kutu çok küçükse yazıyı yazma
+                if(width > 15) {
+                    int txtX = x + (width - fm.stringWidth(s.owner)) / 2;
+                    int txtY = y + (barH + fm.getAscent()) / 2 - 2;
+                    g2d.drawString(s.owner, txtX, txtY);
+                }
+
+                // Zaman etiketi (Başlangıç)
+                g2d.setColor(Color.DARK_GRAY);
+                g2d.setFont(new Font("SansSerif", Font.PLAIN, 11));
+                g2d.drawString(String.valueOf(s.in), x - 3, y + barH + 18);
             }
-            // Bitiş zamanı etiketi
-            int finalX = 20 + (int)(totalDuration * pxPerUnit);
-            g.drawString(String.valueOf(totalDuration), finalX, y + barH + 15);
+            // Son zaman etiketi
+            int finalX = 30 + (int)(totalDuration * pxPerUnit);
+            g2d.drawString(String.valueOf(totalDuration), finalX - 3, y + barH + 18);
         }
 
-        // PID'ye göre rastgele renk üretir
         private Color generateColor(String seed) {
             int hash = seed.hashCode();
-            return new Color((hash * 100) % 255, (hash * 200) % 255, (hash * 300) % 255);
+            // Pastel tonlarda renk üretimi
+            return new Color(
+                    (hash * 123 + 50) % 200,
+                    (hash * 345 + 50) % 200,
+                    (hash * 678 + 50) % 200
+            );
         }
     }
 
     public static void main(String[] args) {
+        // Modern Look and Feel (Nimbus) Etkinleştirme
+        try {
+            for (UIManager.LookAndFeelInfo info : UIManager.getInstalledLookAndFeels()) {
+                if ("Nimbus".equals(info.getName())) {
+                    UIManager.setLookAndFeel(info.getClassName());
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            // Nimbus bulunamazsa varsayılan ile devam et
+        }
+
         SwingUtilities.invokeLater(() -> new ProcessScheduler().setVisible(true));
     }
 }
