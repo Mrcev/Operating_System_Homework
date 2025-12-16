@@ -77,8 +77,30 @@ public class ProcessScheduler extends JFrame {
         // Top Panel: Controls
         JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         JButton loadButton = new JButton("Load File");
+
+        // Algoritma listesi
         algoSelector = new JComboBox<>(new String[]{"FCFS", "SJF (Non-Preemptive)", "Priority (Non-Preemptive)", "Round Robin"});
+
+        // Time Quantum alanı
         quantumField = new JTextField("3", 5);
+
+        // --- YENİ EKLENEN KISIM BAŞLANGIÇ ---
+        // 1. Başlangıçta FCFS seçili olduğu için kutuyu pasif yap
+        quantumField.setEnabled(false);
+
+        // 2. Seçim değiştiğinde tetiklenecek olay (Event Listener)
+        algoSelector.addActionListener(e -> {
+            String selected = (String) algoSelector.getSelectedItem();
+            // Eğer seçilen metin "Round" ile başlıyorsa (Round Robin ise) kutuyu aktif et
+            if (selected.startsWith("Round")) {
+                quantumField.setEnabled(true);
+                quantumField.setBackground(Color.WHITE); // Görsel ipucu: Beyaz (Aktif)
+            } else {
+                quantumField.setEnabled(false);
+                quantumField.setBackground(Color.LIGHT_GRAY); // Görsel ipucu: Gri (Pasif)
+            }
+        });
+        // --- YENİ EKLENEN KISIM BİTİŞ ---ss
         JButton runButton = new JButton("Run Simulation");
 
         topPanel.add(new JLabel("Input File:"));
