@@ -82,10 +82,11 @@ public class ProcessScheduler extends JFrame {
     private JTextField txtQuantum;
     private JLabel lblAvgWait, lblAvgTurn, lblUtil;
 
+    // Veri kaynağımız dinamik, Run butonuna basınca doldurulacak.
     private List<Job> rawData = new ArrayList<>();
 
     public ProcessScheduler() {
-        setTitle("Gokberk Ceviker OS_HOMEWORK");
+        setTitle("Gokberk Ceviker OS_HOMEWORK (Live Editor Mode)");
         setSize(1100, 750);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout(15, 15));
@@ -93,8 +94,7 @@ public class ProcessScheduler extends JFrame {
 
         initUI();
 
-        // --- OTOMATİK YÜKLEME ---
-        // Program açıldığında src/processes.txt dosyasını kontrol et ve yükle
+        // Otomatik yükleme
         autoLoadDefaultFile();
     }
 
@@ -105,6 +105,8 @@ public class ProcessScheduler extends JFrame {
         pnlTop.setBorder(BorderFactory.createMatteBorder(0, 0, 2, 0, new Color(189, 195, 199)));
 
         JButton btnLoad = createStyledButton("Load File", PRIMARY_COLOR);
+
+        // --- DEĞİŞİKLİK: Run butonu artık PRIMARY_COLOR (Mavi) ---
         JButton btnRun = createStyledButton("Run Simulation", PRIMARY_COLOR);
 
         cmbStrategy = new JComboBox<>(new String[]{"FCFS", "SJF (Non-Preemptive)", "Priority (Non-Preemptive)", "Round Robin"});
@@ -140,14 +142,15 @@ public class ProcessScheduler extends JFrame {
         split.setBorder(null);
         split.setBackground(BG_COLOR);
 
+        // Editlenebilir Metin Alanı
         txtInput = new JTextArea(8, 40);
-        txtInput.setEditable(false);
-        txtInput.setFont(new Font("Monospaced", Font.PLAIN, 13));
+        txtInput.setEditable(true);
+        txtInput.setFont(new Font("Monospaced", Font.PLAIN, 14));
         txtInput.setBorder(new EmptyBorder(5,5,5,5));
 
         JScrollPane scrollInput = new JScrollPane(txtInput);
         scrollInput.setBorder(BorderFactory.createTitledBorder(
-                BorderFactory.createLineBorder(PRIMARY_COLOR), " File Contents ",
+                BorderFactory.createLineBorder(PRIMARY_COLOR, 2), " Edit Process Data Here (P_ID, Arrival, Burst, Priority) ",
                 0, 0, new Font("Segoe UI", Font.BOLD, 12), PRIMARY_COLOR));
         scrollInput.setBackground(Color.WHITE);
 
@@ -221,53 +224,63 @@ public class ProcessScheduler extends JFrame {
 
     // --- Helper Methods ---
 
-    // Varsayılan dosyayı otomatik yükleyen metot
     private void autoLoadDefaultFile() {
-        // Öncelik: src/processes.txt
         File defaultFile = new File("src/processes.txt");
-
-        // Eğer src içinde bulamazsa proje kök dizininde ara
-        if (!defaultFile.exists()) {
-            defaultFile = new File("processes.txt");
-        }
+        if (!defaultFile.exists()) defaultFile = new File("processes.txt");
 
         if (defaultFile.exists()) {
-            loadDataFromFile(defaultFile);
-            // Otomatik yüklemede mesaj kutusu çıkarmıyoruz, sadece statü barına yazabiliriz veya sessiz kalırız.
-        } else {
-            System.out.println("Default file not found: processes.txt");
+            loadTextFromFile(defaultFile);
         }
     }
 
-    // Dosya seçme diyaloğunu açan metot
     private void browseFile() {
         JFileChooser fc = new JFileChooser(new File("."));
         if (fc.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
-            loadDataFromFile(fc.getSelectedFile());
+            loadTextFromFile(fc.getSelectedFile());
         }
     }
 
-    // Gerçek dosya okuma işlemini yapan ayrıştırılmış metot
-    private void loadDataFromFile(File file) {
-        rawData.clear();
-        txtInput.setText("");
+    private void loadTextFromFile(File file) {
+        StringBuilder sb = new StringBuilder();
         try (BufferedReader br = new BufferedReader(new FileReader(file))) {
             String line;
             while ((line = br.readLine()) != null) {
-                if (line.trim().isEmpty()) continue;
-                txtInput.append(line + "\n");
-                String[] token = line.split(",");
-                if (token.length >= 4) {
-                    rawData.add(new Job(token[0].trim(),
-                            Integer.parseInt(token[1].trim()),
-                            Integer.parseInt(token[2].trim()),
-                            Integer.parseInt(token[3].trim())));
-                }
+                sb.append(line).append("\n");
             }
-            // Başarılı yükleme mesajı (İsteğe bağlı, otomatik yüklemede kaldırılabilir ama kullanıcı görsün diye bırakıyorum)
-            // JOptionPane.showMessageDialog(this, "Loaded " + rawData.size() + " tasks.");
+            txtInput.setText(sb.toString());
+            txtInput.setCaretPosition(0);
         } catch (Exception e) {
             JOptionPane.showMessageDialog(this, "Read Error: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private boolean parseInputData() {
+        rawData.clear();
+        String content = txtInput.getText();
+        if (content.trim().isEmpty()) return false;
+
+        String[] lines = content.split("\\n");
+        int lineNum = 0;
+        try {
+            for (String line : lines) {
+                lineNum++;
+                if (line.trim().isEmpty()) continue;
+                String[] token = line.split(",");
+                if (token.length < 4) {
+                    throw new Exception("Missing columns (Format: ID, Arrival, Burst, Priority)");
+                }
+                rawData.add(new Job(token[0].trim(),
+                        Integer.parseInt(token[1].trim()),
+                        Integer.parseInt(token[2].trim()),
+                        Integer.parseInt(token[3].trim())));
+            }
+            return true;
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this,
+                    "Error parsing line " + lineNum + ": " + e.getMessage() + "\n" +
+                            "Please correct the text in the editor and try again.",
+                    "Data Format Error", JOptionPane.ERROR_MESSAGE);
+            return false;
         }
     }
 
@@ -298,8 +311,12 @@ public class ProcessScheduler extends JFrame {
     // --- Simulation Logic ---
 
     private void startSimulation() {
-        if (rawData.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Please load a file first.", "Warning", JOptionPane.WARNING_MESSAGE);
+        // Parse current text content
+        if (!parseInputData()) {
+            if (rawData.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Input area is empty or invalid.", "Warning", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
             return;
         }
 
@@ -312,6 +329,13 @@ public class ProcessScheduler extends JFrame {
         try {
             if (mode.startsWith("Round")) {
                 int q = Integer.parseInt(txtQuantum.getText().trim());
+
+                // --- DEĞİŞİKLİK: Time Quantum Kontrolü ---
+                if (q <= 0) {
+                    JOptionPane.showMessageDialog(this, "Time Quantum must be a positive integer.", "Input Error", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+
                 calcRoundRobin(activeJobs, q, timeline);
             } else if (mode.startsWith("Priority")) {
                 calcPriority(activeJobs, timeline);
@@ -465,7 +489,6 @@ public class ProcessScheduler extends JFrame {
         pnlChart.drawData(timeline, maxEnd);
     }
 
-    // --- Visualization Panel ---
     class VisualizationPanel extends JPanel {
         private List<ChartSegment> segments;
         private int totalDuration;
