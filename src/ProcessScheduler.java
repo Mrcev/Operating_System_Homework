@@ -86,7 +86,7 @@ public class ProcessScheduler extends JFrame {
     private List<Job> rawData = new ArrayList<>();
 
     public ProcessScheduler() {
-        setTitle("Gokberk Ceviker OS_HOMEWORK (Live Editor Mode)");
+        setTitle("Gokberk Ceviker OS_HOMEWORK");
         setSize(1100, 750);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout(15, 15));
